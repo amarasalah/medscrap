@@ -6,24 +6,27 @@ import FilterBar from '@/components/FilterBar';
 import ResultsTable from '@/components/ResultsTable';
 import DoctorModal from '@/components/DoctorModal';
 import ExportBar from '@/components/ExportBar';
+import { matchesAnyAddress, searchableText } from '@/lib/doctor';
+
+const EMPTY_FILTERS = {
+  country: '',
+  region: '',
+  department: '',
+  city: '',
+  specialty: '',
+  type: '',
+  convention: '',
+  search: '',
+};
 
 export default function Home() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDoctor, setSelectedDoctor] = useState(null);
-  const [filters, setFilters] = useState({
-    region: '',
-    department: '',
-    city: '',
-    specialty: '',
-    type: '',
-    convention: '',
-    search: '',
-  });
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
 
-  // Load data from JSON
   useEffect(() => {
-    fetch('/doctors.json')
+    fetch('/doctors.json', { cache: 'no-store' })
       .then(res => res.json())
       .then(jsonData => {
         setData(jsonData);
@@ -35,18 +38,20 @@ export default function Home() {
       });
   }, []);
 
-  // Apply filters
   const filteredData = useMemo(() => {
     let result = data;
 
+    if (filters.country) {
+      result = result.filter(d => d.country === filters.country);
+    }
     if (filters.region) {
-      result = result.filter(d => d.region === filters.region);
+      result = result.filter(d => matchesAnyAddress(d, a => a.region === filters.region));
     }
     if (filters.department) {
-      result = result.filter(d => d.department === filters.department);
+      result = result.filter(d => matchesAnyAddress(d, a => a.department === filters.department));
     }
     if (filters.city) {
-      result = result.filter(d => d.city === filters.city);
+      result = result.filter(d => matchesAnyAddress(d, a => a.city === filters.city));
     }
     if (filters.specialty) {
       result = result.filter(d => d.specialty === filters.specialty);
@@ -59,11 +64,7 @@ export default function Home() {
     }
     if (filters.search) {
       const q = filters.search.toLowerCase();
-      result = result.filter(d =>
-        (d.name || '').toLowerCase().includes(q) ||
-        (d.address || '').toLowerCase().includes(q) ||
-        (d.phone || '').includes(q)
-      );
+      result = result.filter(d => searchableText(d).includes(q));
     }
 
     return result;

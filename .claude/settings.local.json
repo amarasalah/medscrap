@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash('C:\\\\Users\\\\DELL\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python.exe' -c ' *)",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python.exe\" scripts/scrape-france.py --source sante --specialty gynecologie --max-pages 2 --out data/fr-test-gyno.json)",
+      "Bash(C:\\\\Users\\\\DELL\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python.exe *)",
+      "Bash(curl -sIL -A \"Mozilla/5.0\" \"https://www.cqc.org.uk/about-us/transparency/using-cqc-data\" -o /dev/null -w \"HTTP %{http_code}\\\\n\")",
+      "Bash(curl -sL -A \"Mozilla/5.0\" \"https://www.cqc.org.uk/about-us/transparency/using-cqc-data\")",
+      "Bash(curl -sL -A \"Mozilla/5.0\" \"https://www.cqc.org.uk/sites/default/files/2026-05/20_May_2026_CQC_directory.csv\" -o data/cqc-directory.csv -w \"HTTP %{http_code} size %{size_download}\\\\n\")",
+      "Bash(curl -sIL -A \"Mozilla/5.0\" \"https://www.sanidad.gob.es/ciudadanos/prestaciones/centrosServiciosSNS/hospitales/docs/CNH_Publicacion.xls\" -o /dev/null -w \"HTTP %{http_code} type %{content_type}\\\\n\")",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python.exe\" scripts/convert-cqc.py data/cqc-directory.csv)",
+      "Bash(curl -sL -A \"Mozilla/5.0\" \"https://datos.gob.es/es/catalogo?q=catalogo+nacional+hospitales\" -o data/datos-search.html -w \"HTTP %{http_code}\\\\n\")",
+      "Bash(curl -sIL -A \"Mozilla/5.0\" \"https://www.sanidad.gob.es/areas/calidadAsistencial/ciudadanos/centrosServiciosSNS/hospitales/home.htm\" -o /dev/null -w \"HTTP %{http_code}\\\\n\")",
+      "Bash(curl -sL -A \"Mozilla/5.0\" \"https://datos.gob.es/apidata/catalog/dataset.json?q=hospital&_pageSize=5\" -o data/datos-api.json -w \"HTTP %{http_code} size %{size_download}\\\\n\")",
+      "Bash(curl -sL -A \"Mozilla/5.0\" -H \"Accept: application/json\" \"https://datos.gob.es/apidata/catalog/dataset?_pageSize=10&q=hospital\" -o data/datos-api2.json -w \"HTTP %{http_code} size %{size_download}\\\\n\")",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python.exe\" scripts/_test_doctoralia.py)",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python.exe\" scripts/merge-sources.py)"
+    ]
+  }
+}

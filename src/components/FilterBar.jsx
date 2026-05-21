@@ -2,40 +2,58 @@
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useMemo } from 'react';
 import { FiSearch, FiX, FiFilter } from 'react-icons/fi';
+import { COUNTRY_LABELS } from '@/lib/doctor';
+
+function uniqueFromAddresses(data, field, parentFilter) {
+  const set = new Set();
+  for (const d of data) {
+    if (parentFilter && !parentFilter(d)) continue;
+    for (const a of d.addresses || []) {
+      if (a[field]) set.add(a[field]);
+    }
+  }
+  return [...set].sort();
+}
 
 export default function FilterBar({ data, filters, setFilters, filteredCount }) {
   const { t } = useLanguage();
 
-  // Compute unique values for dropdowns, respecting cascading
-  const regions = useMemo(() => {
-    const set = new Set(data.map(d => d.region).filter(Boolean));
+  const countries = useMemo(() => {
+    const set = new Set(data.map(d => d.country).filter(Boolean));
     return [...set].sort();
   }, [data]);
+
+  const scoped = useMemo(() => {
+    return filters.country ? data.filter(d => d.country === filters.country) : data;
+  }, [data, filters.country]);
+
+  const regions = useMemo(() => uniqueFromAddresses(scoped, 'region'), [scoped]);
 
   const departments = useMemo(() => {
-    let subset = data;
-    if (filters.region) subset = subset.filter(d => d.region === filters.region);
-    const set = new Set(subset.map(d => d.department).filter(Boolean));
-    return [...set].sort();
-  }, [data, filters.region]);
+    const inRegion = filters.region
+      ? (d) => (d.addresses || []).some(a => a.region === filters.region)
+      : null;
+    return uniqueFromAddresses(scoped, 'department', inRegion);
+  }, [scoped, filters.region]);
 
   const cities = useMemo(() => {
-    let subset = data;
-    if (filters.region) subset = subset.filter(d => d.region === filters.region);
-    if (filters.department) subset = subset.filter(d => d.department === filters.department);
-    const set = new Set(subset.map(d => d.city).filter(Boolean));
-    return [...set].sort();
-  }, [data, filters.region, filters.department]);
+    const matches = (d) => {
+      if (filters.region && !(d.addresses || []).some(a => a.region === filters.region)) return false;
+      if (filters.department && !(d.addresses || []).some(a => a.department === filters.department)) return false;
+      return true;
+    };
+    return uniqueFromAddresses(scoped, 'city', matches);
+  }, [scoped, filters.region, filters.department]);
 
   const specialties = useMemo(() => {
-    const set = new Set(data.map(d => d.specialty).filter(Boolean));
+    const set = new Set(scoped.map(d => d.specialty).filter(Boolean));
     return [...set].sort();
-  }, [data]);
+  }, [scoped]);
 
   const conventions = useMemo(() => {
-    const set = new Set(data.map(d => d.convention).filter(Boolean));
+    const set = new Set(scoped.map(d => d.convention).filter(Boolean));
     return [...set].sort();
-  }, [data]);
+  }, [scoped]);
 
   const activeFilterCount = useMemo(() => {
     return Object.values(filters).filter(v => v && v !== '').length;
@@ -43,7 +61,12 @@ export default function FilterBar({ data, filters, setFilters, filteredCount }) 
 
   const handleChange = (key, value) => {
     const newFilters = { ...filters, [key]: value };
-    // Cascade: reset children when parent changes
+    if (key === 'country') {
+      newFilters.region = '';
+      newFilters.department = '';
+      newFilters.city = '';
+      newFilters.convention = '';
+    }
     if (key === 'region') {
       newFilters.department = '';
       newFilters.city = '';
@@ -56,6 +79,7 @@ export default function FilterBar({ data, filters, setFilters, filteredCount }) 
 
   const clearAll = () => {
     setFilters({
+      country: '',
       region: '',
       department: '',
       city: '',
@@ -65,6 +89,8 @@ export default function FilterBar({ data, filters, setFilters, filteredCount }) 
       search: '',
     });
   };
+
+  const showConvention = !filters.country || filters.country === 'FR';
 
   return (
     <div className="filter-bar">
@@ -82,6 +108,20 @@ export default function FilterBar({ data, filters, setFilters, filteredCount }) 
       </div>
 
       <div className="filter-grid">
+        {countries.length > 1 && (
+          <div className="filter-group">
+            <label htmlFor="filter-country">{t('country')}</label>
+            <select
+              id="filter-country"
+              value={filters.country}
+              onChange={(e) => handleChange('country', e.target.value)}
+            >
+              <option value="">{t('allCountries')}</option>
+              {countries.map(c => <option key={c} value={c}>{COUNTRY_LABELS[c] || c}</option>)}
+            </select>
+          </div>
+        )}
+
         <div className="filter-group">
           <label htmlFor="filter-region">{t('region')}</label>
           <select
@@ -143,17 +183,19 @@ export default function FilterBar({ data, filters, setFilters, filteredCount }) 
           </select>
         </div>
 
-        <div className="filter-group">
-          <label htmlFor="filter-convention">{t('convention')}</label>
-          <select
-            id="filter-convention"
-            value={filters.convention}
-            onChange={(e) => handleChange('convention', e.target.value)}
-          >
-            <option value="">{t('allConventions')}</option>
-            {conventions.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
+        {showConvention && (
+          <div className="filter-group">
+            <label htmlFor="filter-convention">{t('convention')}</label>
+            <select
+              id="filter-convention"
+              value={filters.convention}
+              onChange={(e) => handleChange('convention', e.target.value)}
+            >
+              <option value="">{t('allConventions')}</option>
+              {conventions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        )}
 
         <div className="filter-group filter-search-group">
           <label htmlFor="filter-search">{t('name')}</label>

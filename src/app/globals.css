@@ -268,6 +268,12 @@ body {
   display: inline-block; padding: 3px 10px; border-radius: 20px;
   font-size: 0.72rem; font-weight: 600; white-space: nowrap;
 }
+.multi-badge {
+  display: inline-block; margin-left: 4px;
+  font-size: 0.7rem; font-weight: 700; color: var(--accent-2);
+  background: rgba(129,140,248,0.12); border: 1px solid rgba(129,140,248,0.25);
+  padding: 1px 6px; border-radius: 10px;
+}
 .conv-1 { background: rgba(52,211,153,0.12); color: var(--conv-1); border: 1px solid rgba(52,211,153,0.2); }
 .conv-2 { background: rgba(251,191,36,0.12); color: var(--conv-2); border: 1px solid rgba(251,191,36,0.2); }
 

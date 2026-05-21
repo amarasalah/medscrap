@@ -38,13 +38,14 @@ export default function StatsBar({ data }) {
 
   const totalPros = data.filter(d => d.type === 'professionnel_de_sante').length;
   const totalInst = data.filter(d => d.type === 'health_institution').length;
-  const totalCities = new Set(data.map(d => d.city).filter(Boolean)).size;
+  const cities = new Set();
+  data.forEach(d => (d.addresses || []).forEach(a => a.city && cities.add(a.city)));
 
   const stats = [
     { icon: <FiActivity />, label: t('totalRecords'), value: data.length, color: 'var(--accent-1)' },
     { icon: <FiUsers />, label: t('professionals'), value: totalPros, color: 'var(--accent-2)' },
     { icon: <FiHome />, label: t('institutions'), value: totalInst, color: 'var(--accent-3)' },
-    { icon: <FiMapPin />, label: t('cities'), value: totalCities, color: 'var(--accent-4)' },
+    { icon: <FiMapPin />, label: t('cities'), value: cities.size, color: 'var(--accent-4)' },
   ];
 
   return (

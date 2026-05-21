@@ -1,7 +1,7 @@
 'use client';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useEffect, useRef } from 'react';
-import { FiX, FiPhone, FiMapPin, FiExternalLink, FiMap, FiTag, FiUser, FiHome } from 'react-icons/fi';
+import { FiX, FiPhone, FiMapPin, FiExternalLink, FiMap, FiTag, FiUser, FiHome, FiMail } from 'react-icons/fi';
 import { RiStethoscopeLine } from 'react-icons/ri';
 
 export default function DoctorModal({ doctor, onClose }) {
@@ -23,6 +23,9 @@ export default function DoctorModal({ doctor, onClose }) {
   if (!doctor) return null;
 
   const isPro = doctor.type === 'professionnel_de_sante';
+  const addresses = doctor.addresses || [];
+  const phones = doctor.phones || [];
+  const primaryMaps = addresses.find(a => a.mapsUrl)?.mapsUrl;
 
   return (
     <div
@@ -35,7 +38,6 @@ export default function DoctorModal({ doctor, onClose }) {
           <FiX />
         </button>
 
-        {/* Header */}
         <div className="modal-header">
           <div className={`modal-type-badge ${isPro ? 'badge-pro' : 'badge-inst'}`}>
             {isPro ? <FiUser /> : <FiHome />}
@@ -50,7 +52,6 @@ export default function DoctorModal({ doctor, onClose }) {
           )}
         </div>
 
-        {/* Details grid */}
         <div className="modal-details">
           {doctor.subSpecialty && (
             <div className="detail-row">
@@ -62,34 +63,66 @@ export default function DoctorModal({ doctor, onClose }) {
             </div>
           )}
 
-          <div className="detail-row">
-            <div className="detail-icon"><FiMapPin /></div>
-            <div className="detail-content">
-              <span className="detail-label">{t('address')}</span>
-              <span className="detail-value">{doctor.address || t('noAddress')}</span>
-              {doctor.city && (
-                <span className="detail-sub">
-                  {doctor.city}{doctor.postalCode ? ` · ${doctor.postalCode}` : ''}
-                  {doctor.department ? ` · ${doctor.department}` : ''}
-                </span>
-              )}
-              {doctor.region && (
-                <span className="detail-sub">{doctor.region}</span>
-              )}
+          {addresses.length === 0 && (
+            <div className="detail-row">
+              <div className="detail-icon"><FiMapPin /></div>
+              <div className="detail-content">
+                <span className="detail-label">{t('address')}</span>
+                <span className="detail-value muted">{t('noAddress')}</span>
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="detail-row">
-            <div className="detail-icon"><FiPhone /></div>
-            <div className="detail-content">
-              <span className="detail-label">{t('phone')}</span>
-              {doctor.phone ? (
-                <a href={`tel:${doctor.phoneRaw}`} className="detail-phone">{doctor.phone}</a>
-              ) : (
-                <span className="detail-value muted">{t('noPhone')}</span>
-              )}
+          {addresses.map((a, i) => (
+            <div className="detail-row" key={`addr-${i}`}>
+              <div className="detail-icon"><FiMapPin /></div>
+              <div className="detail-content">
+                <span className="detail-label">
+                  {addresses.length > 1 ? `${t('address')} ${i + 1}` : t('address')}
+                </span>
+                <span className="detail-value">{a.address || t('noAddress')}</span>
+                {a.city && (
+                  <span className="detail-sub">
+                    {a.city}{a.postalCode ? ` · ${a.postalCode}` : ''}
+                    {a.department ? ` · ${a.department}` : ''}
+                  </span>
+                )}
+                {a.region && <span className="detail-sub">{a.region}</span>}
+              </div>
             </div>
-          </div>
+          ))}
+
+          {phones.length === 0 ? (
+            <div className="detail-row">
+              <div className="detail-icon"><FiPhone /></div>
+              <div className="detail-content">
+                <span className="detail-label">{t('phone')}</span>
+                <span className="detail-value muted">{t('noPhone')}</span>
+              </div>
+            </div>
+          ) : (
+            phones.map((p, i) => (
+              <div className="detail-row" key={`ph-${i}`}>
+                <div className="detail-icon"><FiPhone /></div>
+                <div className="detail-content">
+                  <span className="detail-label">
+                    {phones.length > 1 ? `${t('phone')} ${i + 1}` : t('phone')}
+                  </span>
+                  <a href={`tel:${p.raw}`} className="detail-phone">{p.formatted}</a>
+                </div>
+              </div>
+            ))
+          )}
+
+          {doctor.email && (
+            <div className="detail-row">
+              <div className="detail-icon"><FiMail /></div>
+              <div className="detail-content">
+                <span className="detail-label">{t('email')}</span>
+                <a href={`mailto:${doctor.email}`} className="detail-phone">{doctor.email}</a>
+              </div>
+            </div>
+          )}
 
           {doctor.convention && (
             <div className="detail-row">
@@ -104,7 +137,6 @@ export default function DoctorModal({ doctor, onClose }) {
           )}
         </div>
 
-        {/* Action buttons */}
         <div className="modal-actions">
           {doctor.profileUrl && (
             <a
@@ -118,9 +150,9 @@ export default function DoctorModal({ doctor, onClose }) {
               {t('profile')}
             </a>
           )}
-          {doctor.mapsUrl && (
+          {primaryMaps && (
             <a
-              href={doctor.mapsUrl}
+              href={primaryMaps}
               target="_blank"
               rel="noopener noreferrer"
               className="modal-btn modal-btn-secondary"
