@@ -72,6 +72,15 @@ PLACEHOLDER_EMAILS = {
     "email@example.com", "your@email.com",
 }
 
+# Domains used by JS error-tracking / dev infra. Their "emails" are bug-report
+# ingest tokens, not real addresses.
+TRACKING_EMAIL_DOMAINS = {
+    "sentry.io", "ingest.sentry.io", "ingest.us.sentry.io",
+    "sentry-next.wixpress.com", "wixpress.com",
+    "bugsnag.com", "rollbar.com", "raygun.io", "datadoghq.com",
+    "newrelic.com",
+}
+
 
 def looks_like_email(s: str) -> bool:
     if not EMAIL_RE.fullmatch(s):
@@ -85,6 +94,12 @@ def looks_like_email(s: str) -> bool:
     if "@site.com" in low or "@yoursite." in low or "@domain." in low:
         return False
     if is_directory_email(low):
+        return False
+    # Reject error-tracking sentinel addresses (32-char hex local-part is the
+    # tell-tale Sentry/Wix pattern).
+    domain = low.rsplit("@", 1)[1]
+    if any(domain == d or domain.endswith("." + d)
+           for d in TRACKING_EMAIL_DOMAINS):
         return False
     return True
 
@@ -134,7 +149,7 @@ def fetch_email(session: requests.Session, url: str) -> str | None:
         return None
 
     try:
-        r = session.get(url, timeout=8, allow_redirects=True)
+        r = session.get(url, timeout=4, allow_redirects=True)
     except requests.RequestException:
         return None
     if r.status_code != 200 or "text/html" not in (r.headers.get("Content-Type") or ""):
@@ -146,9 +161,9 @@ def fetch_email(session: requests.Session, url: str) -> str | None:
 
     # Try /contact subpage
     base = f"{urlparse(url).scheme}://{host}"
-    for path in ("/contact", "/contact-us", "/contacto", "/contact.html"):
+    for path in ("/contact", "/contacto"):
         try:
-            r2 = session.get(urljoin(base, path), timeout=6, allow_redirects=True)
+            r2 = session.get(urljoin(base, path), timeout=3, allow_redirects=True)
         except requests.RequestException:
             continue
         if r2.status_code != 200:
@@ -172,8 +187,26 @@ def main():
     bak = args.input.with_suffix(args.input.suffix + ".bak")
     if not bak.exists():
         bak.write_text(raw_text, encoding="utf-8")
+
+    def has_real_url(r) -> bool:
+        """True if any URL on the record points outside known directory hosts."""
+        for u in (r.get("website"), r.get("profileUrl")):
+            if not u:
+                continue
+            try:
+                host = (urlparse(u).hostname or "").lower().lstrip("www.")
+            except Exception:
+                continue
+            if host in SKIP_HOSTS:
+                continue
+            if any(host == d or host.endswith("." + d)
+                   for d in DIRECTORY_EMAIL_DOMAINS):
+                continue
+            return True
+        return False
+
     todo = [(i, r) for i, r in enumerate(records)
-            if (r.get("website") or r.get("profileUrl")) and not r.get("email")]
+            if has_real_url(r) and not r.get("email")]
     if args.limit:
         todo = todo[:args.limit]
     log(f"records to try: {len(todo)} (of {len(records)} total)")

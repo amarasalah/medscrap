@@ -193,6 +193,26 @@ QUERIES = {
         ["andrologue", "andrologie"],
         "Andrologue",
     ),
+    "fr-gynecology": (
+        "FR",
+        ["gynécologue", "clinique gynécologique", "cabinet gynécologie"],
+        "Gynécologue",
+    ),
+    "fr-urology": (
+        "FR",
+        ["urologue", "clinique urologique", "cabinet urologie"],
+        "Urologue",
+    ),
+    "fr-dermatology": (
+        "FR",
+        ["dermatologue", "clinique dermatologique", "cabinet dermatologie"],
+        "Dermatologue",
+    ),
+    "fr-aesthetic": (
+        "FR",
+        ["médecine esthétique", "clinique esthétique", "médecin esthétique"],
+        "Médecine esthétique",
+    ),
 }
 
 
