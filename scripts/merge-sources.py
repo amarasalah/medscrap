@@ -115,10 +115,17 @@ def main():
 
     new_groups: list[tuple[str, list[dict]]] = []
     for path in sorted(args.data_dir.glob("*.json")):
+        # Skip helper files: leading "_" (seed lists) or "." (caches)
+        if path.name.startswith(("_", ".")):
+            log(f"skip helper {path.name}")
+            continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
             log(f"skip {path.name}: {e}")
+            continue
+        if not isinstance(data, list):
+            log(f"skip {path.name}: not a list")
             continue
         log(f"+ {path.name}: {len(data)} records")
         new_groups.append((path.stem, data))

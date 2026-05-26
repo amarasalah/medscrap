@@ -164,6 +164,23 @@ FR_SEEDS = [
     ("Metz", "Moselle", "Grand Est"),
 ]
 
+# Arrondissements — added separately so we can target them with --cities
+# without re-billing the already-covered base FR_SEEDS list.
+FR_PARIS_ARDTS = [
+    (f"Paris {n}{'er' if n == 1 else 'e'}", "Paris", "Île-de-France")
+    for n in range(1, 21)
+]
+FR_LYON_ARDTS = [
+    (f"Lyon {n}{'er' if n == 1 else 'e'}", "Rhône", "Auvergne-Rhône-Alpes")
+    for n in range(1, 10)
+]
+FR_MARSEILLE_ARDTS = [
+    (f"Marseille {n}{'er' if n == 1 else 'e'}", "Bouches-du-Rhône",
+     "Provence-Alpes-Côte d'Azur")
+    for n in range(1, 17)
+]
+FR_SEEDS = FR_SEEDS + FR_PARIS_ARDTS + FR_LYON_ARDTS + FR_MARSEILLE_ARDTS
+
 
 # --- Specialty query templates ---
 
@@ -347,68 +364,129 @@ def details_to_record(country: str, specialty_label: str,
     )
 
 
+# --- Cross-run place_id cache (saves Place Details $$ on already-known places) ---
+
+CACHE_PATH = DATA_DIR / ".places-cache.json"
+
+
+def load_cache() -> dict:
+    if CACHE_PATH.exists():
+        try:
+            return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def save_cache(cache: dict) -> None:
+    CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False),
+                          encoding="utf-8")
+
+
+def load_seeds_file(path: Path, min_pop: int, top_n: int) -> list[tuple]:
+    """Load a JSON seed file (list of {city, department, region, population})
+    and return (city, dept, region) tuples, filtered/sorted."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    items = [r for r in raw if (r.get("population") or 0) >= min_pop]
+    items.sort(key=lambda r: -(r.get("population") or 0))
+    if top_n:
+        items = items[:top_n]
+    return [(r["city"], r.get("department", ""), r.get("region", ""))
+            for r in items]
+
+
 # --- search subcommand ---
 
 def cmd_search(args, api_key: str):
     if args.query not in QUERIES:
         sys.exit(f"unknown query: {args.query}. Options: {list(QUERIES)}")
     country, queries, label = QUERIES[args.query]
-    seeds = {"FR": FR_SEEDS, "GB": UK_SEEDS, "ES": ES_SEEDS}[country]
+
+    if args.seeds_file:
+        seeds = load_seeds_file(args.seeds_file, args.min_pop, args.top_n)
+        log(f"--seeds-file: {len(seeds)} seeds (min-pop={args.min_pop}, "
+            f"top-n={args.top_n or 'all'})")
+    else:
+        seeds = {"FR": FR_SEEDS, "GB": UK_SEEDS, "ES": ES_SEEDS}[country]
+
+    if args.cities:
+        wanted = [c.strip().lower() for c in args.cities.split(",") if c.strip()]
+        seeds = [s for s in seeds if any(w in s[0].lower() for w in wanted)]
+        log(f"--cities filter: {len(seeds)} seeds match {wanted}")
+        if not seeds:
+            sys.exit("no seeds match --cities filter")
+
+    cache = load_cache()
+    log(f"place_id cache: {len(cache)} known ids")
 
     session = make_session()
     session.headers["Accept"] = "application/json"
     budget = Budget(args.max_calls)
     out: list[dict] = []
     seen: set[str] = set()
-    out_path = DATA_DIR / f"{country.lower()}-places-{args.query.split('-', 1)[1]}.json"
+    skipped_cached = 0
+    topic = args.query.split('-', 1)[1]
+    suffix = f"-{args.out_suffix}" if args.out_suffix else ""
+    out_path = DATA_DIR / f"{country.lower()}-places-{topic}{suffix}.json"
 
-    for city, dept, region in seeds:
-        if not budget.can_spend():
-            log(f"budget exhausted at {budget.used}/{budget.max}, stopping")
-            break
-        for q in queries:
-            full_q = f"{q} in {city}, {country}"
-            log(f"search: {full_q}")
-            data = text_search(session, api_key, full_q, country, budget)
-            results = (data or {}).get("results") or []
-            log(f"  page 1: {len(results)} results")
+    try:
+        for city, dept, region in seeds:
+            if not budget.can_spend():
+                log(f"budget exhausted at {budget.used}/{budget.max}, stopping")
+                break
+            for q in queries:
+                full_q = f"{q} in {city}, {country}"
+                log(f"search: {full_q}")
+                data = text_search(session, api_key, full_q, country, budget)
+                results = (data or {}).get("results") or []
+                log(f"  page 1: {len(results)} results")
 
-            # Pagination — Google requires a small delay before the next_page_token is valid
-            pages = [results]
-            tok = (data or {}).get("next_page_token")
-            page_n = 1
-            while tok and page_n < 3 and budget.can_spend():
-                time.sleep(2)
-                data2 = text_search(session, api_key, full_q, country, budget,
-                                    pagetoken=tok)
-                if not data2:
-                    break
-                rs = data2.get("results") or []
-                log(f"  page {page_n + 1}: {len(rs)} results")
-                pages.append(rs)
-                tok = data2.get("next_page_token")
-                page_n += 1
+                # Pagination — Google requires a small delay before the next_page_token is valid
+                pages = [results]
+                tok = (data or {}).get("next_page_token")
+                page_n = 1
+                while tok and page_n < 3 and budget.can_spend():
+                    time.sleep(2)
+                    data2 = text_search(session, api_key, full_q, country, budget,
+                                        pagetoken=tok)
+                    if not data2:
+                        break
+                    rs = data2.get("results") or []
+                    log(f"  page {page_n + 1}: {len(rs)} results")
+                    pages.append(rs)
+                    tok = data2.get("next_page_token")
+                    page_n += 1
 
-            for results in pages:
-                for r in results:
-                    pid = r.get("place_id")
-                    if not pid or pid in seen:
-                        continue
-                    seen.add(pid)
-                    det = place_details(session, api_key, pid, budget)
-                    if not det:
-                        continue
-                    rec = details_to_record(country, label, det, dept, region)
-                    if rec["name"]:
-                        out.append(rec)
-                    polite_sleep(0.1, 0.3)
+                for results in pages:
+                    for r in results:
+                        pid = r.get("place_id")
+                        if not pid or pid in seen:
+                            continue
+                        seen.add(pid)
+                        if pid in cache:
+                            skipped_cached += 1
+                            continue
+                        det = place_details(session, api_key, pid, budget)
+                        if not det:
+                            continue
+                        rec = details_to_record(country, label, det, dept, region)
+                        if rec["name"]:
+                            out.append(rec)
+                            cache[pid] = {"name": rec["name"],
+                                          "country": country,
+                                          "topic": topic}
+                        polite_sleep(0.1, 0.3)
+                        if not budget.can_spend():
+                            break
                     if not budget.can_spend():
                         break
-                if not budget.can_spend():
-                    break
+    finally:
+        save_cache(cache)
 
     write_jsonl(out_path, out)
-    log(f"wrote {len(out)} records to {out_path}; used {budget.used}/{budget.max} calls")
+    log(f"wrote {len(out)} new records to {out_path}; "
+        f"skipped {skipped_cached} already-cached place_ids; "
+        f"used {budget.used}/{budget.max} calls")
 
 
 # --- enrich subcommand ---
@@ -488,6 +566,20 @@ def main():
                     help="(enrich) path to a doctors.json-shaped file")
     ap.add_argument("--max-calls", type=int, default=2000,
                     help="hard cap on total API calls this run")
+    ap.add_argument("--cities", default="",
+                    help="(search) comma-separated case-insensitive substrings; "
+                    "only seeds whose city name contains one of these run. "
+                    "Example: --cities 'Paris 1er,Paris 2e'")
+    ap.add_argument("--out-suffix", default="",
+                    help="(search) appended to the output filename, e.g. "
+                    "--out-suffix arrdt writes fr-places-urology-arrdt.json")
+    ap.add_argument("--seeds-file", type=Path, default=None,
+                    help="(search) JSON list of {city,department,region,population}; "
+                    "overrides built-in FR_SEEDS/UK_SEEDS/ES_SEEDS.")
+    ap.add_argument("--min-pop", type=int, default=0,
+                    help="(search) only seed entries with population >= this.")
+    ap.add_argument("--top-n", type=int, default=0,
+                    help="(search) after sorting by population desc, keep only top N.")
     args = ap.parse_args()
 
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
