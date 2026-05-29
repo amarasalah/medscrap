@@ -264,7 +264,13 @@ def text_search(session, api_key, query, region, budget, pagetoken=None) -> dict
     if r.status_code != 200:
         log(f"text_search HTTP {r.status_code}: {r.text[:200]}")
         return None
-    return r.json()
+    data = r.json()
+    status = data.get("status")
+    if status not in ("OK", "ZERO_RESULTS"):
+        # REQUEST_DENIED, OVER_QUERY_LIMIT, INVALID_REQUEST, etc. — surface the
+        # actual reason so we don't silently burn budget against a broken key.
+        log(f"text_search status={status} msg={data.get('error_message')!r}")
+    return data
 
 
 def place_details(session, api_key, place_id, budget) -> dict | None:
@@ -285,7 +291,13 @@ def place_details(session, api_key, place_id, budget) -> dict | None:
     budget.hit()
     if r.status_code != 200:
         return None
-    return (r.json().get("result") or {}) or None
+    data = r.json()
+    status = data.get("status")
+    if status not in ("OK", "ZERO_RESULTS", "NOT_FOUND"):
+        log(f"place_details status={status} msg={data.get('error_message')!r}")
+        if status == "REQUEST_DENIED":
+            sys.exit(f"Places API rejected request: {data.get('error_message')}")
+    return (data.get("result") or {}) or None
 
 
 def find_place(session, api_key, text, budget) -> str | None:
@@ -303,7 +315,13 @@ def find_place(session, api_key, text, budget) -> str | None:
     budget.hit()
     if r.status_code != 200:
         return None
-    cands = (r.json().get("candidates") or [])
+    data = r.json()
+    status = data.get("status")
+    if status not in ("OK", "ZERO_RESULTS"):
+        log(f"find_place status={status} msg={data.get('error_message')!r}")
+        if status == "REQUEST_DENIED":
+            sys.exit(f"Places API rejected request: {data.get('error_message')}")
+    cands = (data.get("candidates") or [])
     return cands[0]["place_id"] if cands else None
 
 

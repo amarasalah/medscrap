@@ -27,10 +27,50 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _lib import log, make_session
+from _lib import log
+
+
+def make_no_retry_session() -> requests.Session:
+    """Plain session — NO retries. Many doctor sites are dead/slow; with the
+    shared make_session()'s 4 retries × 1.5s backoff, a single bad URL would
+    hold a worker for >20 seconds and stall the whole pool."""
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/124.0 Safari/537.36"),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    })
+    return s
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 MAILTO_RE = re.compile(r"mailto:([^\"'>\s?]+)", re.I)
+
+# Cloudflare email obfuscation — both <a href="/cdn-cgi/l/email-protection#HEX">
+# and <span data-cfemail="HEX">.
+CF_EMAIL_RE = re.compile(
+    r"""(?:data-cfemail|/cdn-cgi/l/email-protection\#)["#]?([0-9a-f]{4,})""",
+    re.I,
+)
+
+# Common obfuscation patterns: "name [at] domain [dot] com", "name(at)domain(dot)com"
+OBFUS_RE = re.compile(
+    r"([A-Za-z0-9._%+\-]+)\s*[\[\(]\s*(?:at|arobase|chez)\s*[\]\)]\s*"
+    r"([A-Za-z0-9.\-]+)\s*[\[\(]\s*(?:dot|point|punto)\s*[\]\)]\s*([A-Za-z]{2,})",
+    re.I,
+)
+
+
+def decode_cfemail(hexstr: str) -> str | None:
+    """Decode Cloudflare email-protection hex string. First byte = XOR key."""
+    try:
+        data = bytes.fromhex(hexstr)
+        if len(data) < 2:
+            return None
+        key = data[0]
+        return "".join(chr(b ^ key) for b in data[1:])
+    except (ValueError, UnicodeDecodeError):
+        return None
 
 GENERIC_PREFIXES = ("info@", "contact@", "hello@", "hi@", "team@",
                     "secretariat@", "receptionist@", "reception@", "admin@",
@@ -116,20 +156,34 @@ def pick_best_email(emails: list[str]) -> str | None:
 def extract_emails(html: str) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
+
+    def add(addr: str) -> None:
+        low = addr.strip().lower()
+        if looks_like_email(low) and low not in seen:
+            seen.add(low)
+            found.append(low)
+
+    # 1. Plain mailto: links
     for m in MAILTO_RE.finditer(html):
-        addr = m.group(1).split("?")[0].strip().lower()
-        if looks_like_email(addr) and addr not in seen:
-            seen.add(addr)
-            found.append(addr)
+        add(m.group(1).split("?")[0])
+
+    # 2. Cloudflare-obfuscated emails (very common on FR clinic sites)
+    for m in CF_EMAIL_RE.finditer(html):
+        decoded = decode_cfemail(m.group(1))
+        if decoded:
+            add(decoded)
+
+    # 3. Human-readable obfuscation: "name [at] domain [dot] com"
+    for m in OBFUS_RE.finditer(html):
+        local, dom_main, dom_tld = m.group(1), m.group(2), m.group(3)
+        add(f"{local}@{dom_main}.{dom_tld}")
+
+    # 4. Bare email regex (skip pages with huge address lists — likely directories)
     if not found:
-        # Fallback: bare email patterns in text (skip if too many — likely a list)
         text_addrs = EMAIL_RE.findall(html)
-        if 1 <= len(set(text_addrs)) <= 5:
+        if 1 <= len(set(text_addrs)) <= 8:
             for a in text_addrs:
-                low = a.lower()
-                if low not in seen and looks_like_email(low):
-                    seen.add(low)
-                    found.append(low)
+                add(a)
     return found
 
 
@@ -149,7 +203,7 @@ def fetch_email(session: requests.Session, url: str) -> str | None:
         return None
 
     try:
-        r = session.get(url, timeout=4, allow_redirects=True)
+        r = session.get(url, timeout=(2, 3), allow_redirects=True)
     except requests.RequestException:
         return None
     if r.status_code != 200 or "text/html" not in (r.headers.get("Content-Type") or ""):
@@ -159,11 +213,16 @@ def fetch_email(session: requests.Session, url: str) -> str | None:
     if pick:
         return pick
 
-    # Try /contact subpage
+    # Try a small set of high-yield subpages. /mentions-legales is legally
+    # required on every French commercial site and almost always contains a
+    # contact email. We keep this list short to bound per-record latency:
+    # each miss costs up to ~3s (timeout) × len(subpaths) per worker.
     base = f"{urlparse(url).scheme}://{host}"
-    for path in ("/contact", "/contacto"):
+    subpaths = ("/mentions-legales", "/contact")
+    for path in subpaths:
         try:
-            r2 = session.get(urljoin(base, path), timeout=3, allow_redirects=True)
+            r2 = session.get(urljoin(base, path), timeout=(2, 2),
+                             allow_redirects=True)
         except requests.RequestException:
             continue
         if r2.status_code != 200:
@@ -179,6 +238,8 @@ def main():
     ap.add_argument("input", type=Path)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int, help="only process first N records")
+    ap.add_argument("--country", default="",
+                    help="filter by country code (FR/GB/ES). Default: all.")
     args = ap.parse_args()
 
     raw_text = args.input.read_text(encoding="utf-8")
@@ -205,13 +266,15 @@ def main():
             return True
         return False
 
+    cc = args.country.strip().upper()
     todo = [(i, r) for i, r in enumerate(records)
-            if has_real_url(r) and not r.get("email")]
+            if has_real_url(r) and not r.get("email")
+            and (not cc or r.get("country") == cc)]
     if args.limit:
         todo = todo[:args.limit]
     log(f"records to try: {len(todo)} (of {len(records)} total)")
 
-    session = make_session()
+    session = make_no_retry_session()
     found = 0
     processed = 0
     lock = threading.Lock()
